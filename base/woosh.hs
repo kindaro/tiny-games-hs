@@ -12,7 +12,7 @@
       { est = zipWith (\ j e → ((((r `div` 3^j) `mod` 3) - 1) + e) `mod` 80) [1..] (es !! 0)
             ++ if r `mod` 7 == 0 then [r `mod` 80] else [ ]
       ; es' = if r `mod` 101 < length est then tail est else est
-    }
+      }
   ; input ← getChar
   ; x' ← fmap (`mod` 80) $ case input of
     { 'a' → pure (x - 1)
