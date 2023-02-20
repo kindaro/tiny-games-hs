@@ -2,7 +2,7 @@
 {- cabal:
 default-language: GHC2021
 default-extensions: BlockArguments DataKinds LambdaCase MultiWayIf OverloadedStrings RecordWildCards TypeFamilies UnicodeSyntax ViewPatterns
-build-depends: base, ghc, optparse-generic, text, mtl
+build-depends: base, containers, ghc, optparse-generic, text, mtl
 ghc-options: -Wall -Wextra -Wno-unticked-promoted-constructors -Wunused-packages
 -}
 
@@ -11,7 +11,11 @@ import Control.Applicative qualified as Applicative
 import Control.Monad.State
 import Data.Bifunctor
 import Data.Char
+import Data.Containers.ListUtils qualified as ListUtils
+import Data.List
 import Data.List.NonEmpty (NonEmpty (..), nonEmpty)
+import Data.Map qualified as Map
+import Data.Maybe
 import Data.Text qualified as Text
 import Data.Text.IO qualified as Text
 import GHC.Data.EnumSet qualified as EnumSet
@@ -276,9 +280,12 @@ repair tokens =
   let
     -- Sometimes GHC's lexer forgets to close the outermost curly brace.
     closingCurlyBraces = replicate ((length . filter ((== "{") . snd)) tokens - (length . filter ((== "}") . snd)) tokens) (ITccurly, "}")
-    replaceRedundantSemicolon = searchAndReplace (const [(ITccurly, "}")]) (Adjacent [Pick ((== ";") . snd), Pick ((== "}") . snd)])
+    dropRedundantSemicolon = searchAndReplace (const [(ITccurly, "}")]) (Adjacent [Pick ((== ";") . snd), Pick ((== "}") . snd)])
+    dropModuleHeader = searchAndReplace
+      do const ([] ∷ [(Token, Text)])
+      do Adjacent [Pick ((== "module") . snd), Pick ((== "Main") . snd), Pick ((== "where") . snd)]
    in
-    replaceRedundantSemicolon (tokens <> closingCurlyBraces)
+    (dropModuleHeader . dropRedundantSemicolon) (tokens <> closingCurlyBraces)
 
 smallPrint ∷ (Text, Token) → Text
 smallPrint (_, ITvocurly) = "{"
@@ -296,11 +303,33 @@ smallPrint (verbatim, _) = verbatim
 render ∷ (Text, Token) → (Token, Text)
 render this@(_, token) = (token, smallPrint this)
 
+renameCurlies ∷ Text → Text
+renameCurlies input =
+  let
+    (curlyConstructors, curlyVariables) =
+      ( partition (isUpper . (!! 1))
+          . fromMaybe (error "Cannot parse curlies!")
+          . runParser parseCurlies
+          . Text.unpack
+      )
+        input
+    shortenings = Map.fromList (ListUtils.nubOrd curlyConstructors `zip` constructors <> ListUtils.nubOrd curlyVariables `zip` variables)
+    shortenCurlies = (regularExpressionParser . Replace (shortenings Map.!)) curliesRegularExpression
+   in
+    (Text.pack . fromMaybe (error "Cannot replace curlies!") . runParser shortenCurlies . Text.unpack) input
+ where
+  parseCurlies = (regularExpressionParser . Match) curliesRegularExpression
+  curliesRegularExpression = Adjacent [Pick (== '{'), Star (Pick isAllowedInIdentifier), Pick (== '}')]
+  variables = inflate ['ऄ' .. 'ह']
+  constructors = inflate ['Ա' .. 'Ֆ']
+  inflate xs = fmap pure xs ++ [x : ys | ys ← inflate xs, x ← xs]
+
 main ∷ IO ()
 main = do
   Command {..} ← getRecord @IO @Command "Minify your Haskell files!"
   sourceCode ← Text.readFile source
-  let (hashLines, actualCode) = cut (all \line → (Text.head line == '#')) (Text.lines sourceCode)
+  let uncurlifiedSourceCode = renameCurlies sourceCode
+  let (hashLines, actualCode) = cut (all \line → (Text.head line == '#')) (Text.lines uncurlifiedSourceCode)
   let output = if target == "-" then Text.putStrLn else Text.writeFile target
   maybe exitFailure (output . (Text.unlines hashLines <>)) do
     pure (Text.unlines actualCode)
