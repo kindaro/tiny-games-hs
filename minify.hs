@@ -1,18 +1,17 @@
 #!cabal
 {- cabal:
 default-language: GHC2021
-default-extensions: BlockArguments DataKinds LambdaCase MultiWayIf OverloadedStrings RecordWildCards TypeFamilies UnicodeSyntax ViewPatterns
+default-extensions: BlockArguments DataKinds DuplicateRecordFields LambdaCase MultiWayIf OverloadedStrings PatternSynonyms RecordWildCards TypeFamilies UnicodeSyntax ViewPatterns
 build-depends: base, containers, ghc, optparse-generic, text, mtl
 ghc-options: -Wall -Wextra -Wno-unticked-promoted-constructors -Wunused-packages
 -}
 
-import Control.Applicative (Alternative ((<|>)), empty)
-import Control.Applicative qualified as Applicative
+import Control.Applicative (Alternative ((<|>)), asum, empty, liftA2, many)
 import Control.Monad.State
 import Data.Bifunctor
 import Data.Char
 import Data.Containers.ListUtils qualified as ListUtils
-import Data.List
+import Data.List hiding (head, tail)
 import Data.List.NonEmpty (NonEmpty (..), nonEmpty)
 import Data.Map qualified as Map
 import Data.Maybe
@@ -23,7 +22,7 @@ import GHC.Data.StringBuffer
 import GHC.Parser.Lexer
 import GHC.Types.SrcLoc
 import Options.Generic
-import System.Exit
+import Prelude hiding (head, tail)
 
 -- | Categorial dual of `either id id`.
 fork ∷ (input → left) → (input → right) → input → (left, right)
@@ -41,10 +40,6 @@ specialTokens = ["(", ",", ")", "{", ";", "}", "[", "]", "←", "→", "<-", "->
 
 isAllowedInIdentifier ∷ Char → Bool
 isAllowedInIdentifier = or . flip fmap [isAlphaNum, (== '_'), (== '\'')] . flip ($)
-
--- | Take the longest prefix that, as a whole, satisfies the condition.
-cut ∷ ([α] → Bool) → [α] → ([α], [α])
-cut fit list = (last . filter (fit . fst)) (zipWith splitAt [0 ..] (replicate (length list + 1) list))
 
 defaultParserOptions ∷ ParserOpts
 defaultParserOptions = mkParserOpts EnumSet.empty EnumSet.empty False False False False
@@ -117,49 +112,89 @@ tokensToStripes = fix \recurse → \(token :| tokens) → case nonEmpty tokens o
           | (isAllowedInIdentifier . Text.last) this == (isAllowedInIdentifier . Text.head) that → token `hates` stripes
           | otherwise → token `isIndifferentTowards` stripes
 
-data Parser token output = Parser {parse ∷ [token] → [([token], output)]}
-uncurryParser ∷ (firstOutput → Parser token nextOutput) → ([token], firstOutput) → [([token], nextOutput)]
+data Parser input output = Parser {parse ∷ input → [(input, output)]}
+uncurryParser ∷ (firstOutput → Parser input nextOutput) → (input, firstOutput) → [(input, nextOutput)]
 uncurryParser makeParser (input, firstOutput) = parse (makeParser firstOutput) input
 instance Functor (Parser input) where fmap function (Parser parser) = Parser ((fmap . fmap . fmap) function parser)
 instance Applicative (Parser input) where
-  pure output = Parser \inputs → [(inputs, output)]
+  pure output = Parser \input → [(input, output)]
   (<*>) = ap
 instance Monad (Parser input) where
-  firstParser >>= makeNextParser = Parser \firstInputs → parse firstParser firstInputs >>= uncurryParser makeNextParser
-instance Alternative (Parser input) where
-  empty = Parser do const []
+  firstParser >>= makeNextParser = Parser \firstInput → parse firstParser firstInput >>= uncurryParser makeNextParser
+instance Monoid input ⇒ Alternative (Parser input) where
+  empty = Parser do const mempty
   thisParser <|> thatParser = Parser \input →
     let
       thisOutput = parse thisParser input
       thatOutput = parse thatParser input
      in
       thisOutput <> thatOutput
-instance MonadPlus (Parser input)
+instance Monoid input ⇒ MonadPlus (Parser input)
 
 class (Monad parser, Alternative parser) ⇒ MonadParser parser where
+  type Chunk parser
   type Input parser
   foresee ∷ parser output → parser output
   orElse ∷ parser output → parser output → parser output
-  match ∷ (Input parser → Bool) → parser (Input parser)
-  matchMaybe ∷ (Input parser → Maybe output) → parser output
+  match ∷ (Chunk parser → Bool) → parser (Chunk parser)
+  matchMaybe ∷ (Chunk parser → Maybe output) → parser output
   close ∷ parser ()
 
-instance MonadParser (Parser token) where
-  type Input (Parser token) = token
+class List list where
+  type Item list
+  bestow ∷ Maybe (Item list, list) → list
+  behead ∷ list → Maybe (Item list, list)
+
+pattern (:::) ∷ ∀ {list}. List list ⇒ Item list → list → list
+pattern head ::: tail ← (behead → Just (head, tail))
+  where
+    head ::: tail = bestow (Just (head, tail))
+
+pattern End ∷ ∀ {list}. List list ⇒ list
+pattern End ← (behead → Nothing)
+  where
+    End = bestow Nothing
+
+{-# COMPLETE (:::), End #-}
+
+instance List Text where
+  type Item Text = Char
+  bestow Nothing = Text.empty
+  bestow (Just (head, tail)) = head `Text.cons` tail
+  behead = Text.uncons
+
+instance List [item] where
+  type Item [item] = item
+  bestow Nothing = []
+  bestow (Just (head, tail)) = head : tail
+  behead [] = Nothing
+  behead (head : tail) = Just (head, tail)
+
+instance (List input, Monoid input) ⇒ MonadParser (Parser input) where
+  type Chunk (Parser input) = Item input
+  type Input (Parser input) = input
   foresee parser = Parser \input → for (parse parser input) \(_, output) → (input, output)
   thisParser `orElse` thatParser = Parser \input →
     let thisOutput = parse thisParser input
      in if null thisOutput then parse thatParser input else thisOutput
   match matching = Parser \case
-    (token : tokens) | matching token → [(tokens, token)]
-    _ → []
+    (token ::: tokens) | matching token → [(tokens, token)]
+    _ → End
   matchMaybe making = Parser \case
-    (token : tokens) → maybe [] (pure . (tokens,)) (making token)
-    _ → []
-  close = Parser \input → if null input then [([], ())] else []
+    (token ::: tokens) → maybe [] (pure . (tokens,)) (making token)
+    _ → End
+  close = Parser \input → case behead input of
+    Nothing → [(End, ())]
+    Just _ → []
 
-instance MonadParser (StateT state (Parser token)) where
-  type Input ((StateT state (Parser token))) = Input (Parser token)
+runParser ∷ List input ⇒ Parser input output → input → Maybe output
+runParser parser input = case parse parser input of
+  [(End, output)] → Just output
+  _ → Nothing
+
+instance (Monoid input, MonadParser (Parser input)) ⇒ MonadParser (StateT state (Parser input)) where
+  type Chunk (StateT state (Parser input)) = Chunk (Parser input)
+  type Input (StateT state (Parser input)) = input
   foresee statefulParser = do
     stateOfParser ← get
     let parser = evalStateT statefulParser stateOfParser
@@ -176,11 +211,6 @@ instance MonadParser (StateT state (Parser token)) where
   matchMaybe = fmap lift matchMaybe
   close = lift close
 
-runParser ∷ Parser token output → [token] → Maybe output
-runParser parser input = case parse parser input of
-  [([], output)] → Just output
-  _ → Nothing
-
 fromLeft ∷ Either left right → Maybe left
 fromLeft (Left left) = Just left
 fromLeft (Right _) = Nothing
@@ -196,7 +226,7 @@ parseStripes
   → monad monoid
 parseStripes parseToken parseRoom = do
   firstToken ← parseToken
-  leftovers ← Applicative.many do
+  leftovers ← many do
     room ← parseRoom
     token ← parseToken
     pure [room, token]
@@ -205,8 +235,15 @@ parseStripes parseToken parseRoom = do
 try ∷ MonadParser parser ⇒ parser output → parser (Maybe output)
 try this = fmap Just this `orElse` pure Nothing
 
+alsuch
+  ∷ (Item (Input parser) ~ Chunk parser, List (Input parser), MonadParser parser, Eq (Item (Input parser)))
+  ⇒ Input parser
+  → parser (Input parser)
+alsuch End = pure End
+alsuch (token ::: tokens) = liftA2 (:::) (match (== token)) (alsuch tokens)
+
 -- | Parse a run of tokens that must have no line breaks.
-chopRun ∷ StateT Int (Parser (Either (Token, Text) Room)) Text
+chopRun ∷ StateT Int (Parser [Either (Token, Text) Room]) Text
 chopRun =
   (close *> pure "") <|> fix \recurse → do
     (_, text) ← matchMaybe fromLeft
@@ -219,7 +256,7 @@ chopRun =
       _ → pure text
 
 -- | Parse appropriate white space between runs.
-chopRoom ∷ StateT Int (Parser (Either (Token, Text) Room)) Text
+chopRoom ∷ StateT Int (Parser [Either (Token, Text) Room]) Text
 chopRoom = do
   room ← lift do matchMaybe fromRight
   pad ← case room of
@@ -237,7 +274,7 @@ chopRoom = do
       modify (+ Text.length pad)
       pure pad
 
-cut80 ∷ StateT Int (Parser (Either (Token, Text) Room)) Text
+cut80 ∷ StateT Int (Parser [Either (Token, Text) Room]) Text
 cut80 = fmap Text.concat (parseStripes (fmap pure chopRun) (fmap pure chopRoom)) <* lift close
 
 data RegularExpression input output where
@@ -248,12 +285,12 @@ data RegularExpression input output where
   Match ∷ RegularExpression input output → RegularExpression input [output]
   Replace ∷ ([input] → [input]) → RegularExpression input input → RegularExpression input input
 
-regularExpressionParser ∷ RegularExpression input output → Parser input [output]
+regularExpressionParser ∷ RegularExpression input output → Parser [input] [output]
 regularExpressionParser = fix \recurse → \case
   Pick check → fmap pure do match check
-  Choice regularExpressions → Applicative.asum (fmap recurse regularExpressions)
-  Adjacent regularExpressions → foldr (Applicative.liftA2 (<>)) (pure []) (fmap recurse regularExpressions)
-  Star regularExpression → fmap concat do Applicative.many (recurse regularExpression)
+  Choice regularExpressions → asum (fmap recurse regularExpressions)
+  Adjacent regularExpressions → foldr (liftA2 (<>)) (pure []) (fmap recurse regularExpressions)
+  Star regularExpression → fmap concat do many (recurse regularExpression)
   Match regularExpression →
     let matcher = regularExpressionParser regularExpression
      in (fmap reverse . flip execStateT [] . fix) \parser → do
@@ -267,7 +304,7 @@ regularExpressionParser = fix \recurse → \case
           maybeMatched ← try matcher
           let replaced = maybe [] replace maybeMatched
           fmap (replaced <>) do
-            Applicative.liftA2 (:) (match (const True)) parser `orElse` (close *> pure [])
+            liftA2 (:) (match (const True)) parser `orElse` (close *> pure [])
 
 searchAndReplace ∷ ([token] → [token]) → RegularExpression token token → [token] → [token]
 searchAndReplace replace regularExpression input =
@@ -324,15 +361,92 @@ renameCurlies input =
   constructors = inflate ['Ա' .. 'Ֆ']
   inflate xs = fmap pure xs ++ [x : ys | ys ← inflate xs, x ← xs]
 
+parseUntil ∷ MonadParser parser ⇒ parser element → parser end → parser [element]
+parseUntil parseElement parseEnd = fix \recurse → do
+  maybeEnd ← (try . foresee) parseEnd
+  case maybeEnd of
+    Just _ → pure []
+    Nothing → do
+      maybeElement ← try parseElement
+      case maybeElement of
+        Nothing → empty
+        Just element → fmap (element :) recurse
+
+data ParsedSourceCode = ParsedSourceCode
+  { hashbang ∷ Maybe Text
+  , leadingComments ∷ Text
+  , moduleHeader ∷ Maybe Text
+  , actualCode ∷ Text
+  , trailingComments ∷ Text
+  }
+  deriving (Show)
+
+manyOrElse ∷ MonadParser parser ⇒ parser a → parser [a]
+manyOrElse parser = someOrElse parser `orElse` pure []
+
+someOrElse ∷ MonadParser parser ⇒ parser a → parser [a]
+someOrElse parser = liftA2 (:) parser (manyOrElse parser)
+
+parseSourceCode ∷ Parser Text ParsedSourceCode
+parseSourceCode = do
+  hashbang ← try parseHashbang
+  leadingComments ← fmap Text.concat do manyOrElse parseComment
+  moduleHeader ← try parseModuleHeader
+  actualCode ← parseCode
+  trailingComments ← fmap Text.concat do many parseComment <* close
+  pure ParsedSourceCode {..}
+ where
+  inSpace ∷ Parser Text Text → Parser Text Text
+  inSpace parser =
+    (fmap Text.concat . sequence)
+      [(fmap Text.pack . many . match) isSpace, parser, (fmap Text.pack . many . match) isSpace]
+      <* foresee (match (not . isSpace) *> pure () <|> close)
+  parseUntilNewLine ∷ Parser Text Text
+  parseUntilNewLine = liftA2 (<>) ((fmap Text.pack . many . match . (/=)) '\n') (alsuch "\n")
+  parseComment = inSpace (parseLineComment <|> parseBlockComment)
+  parseHashbang = liftA2 (<>) (alsuch "#!") parseUntilNewLine
+  parseLineComment, parseBlockComment ∷ Parser Text Text
+  parseLineComment = (fmap Text.concat . sequence) [alsuch "--", parseUntilNewLine]
+  parseBlockComment =
+    (fmap Text.concat . sequence)
+      [alsuch "{-", fmap Text.pack (match (const True) `parseUntil` alsuch "-}"), alsuch "-}"]
+  parseModuleHeader =
+    (inSpace . fmap Text.concat . sequence)
+      [alsuch "module", fmap Text.pack (match (const True) `parseUntil` alsuch "where"), alsuch "where"]
+  parseCode ∷ Parser Text Text
+  parseCode = fmap Text.pack (match (const True) `parseUntil` (many parseComment *> close))
+
+data SourceCodeToRender = SourceCodeToRender
+  { hashbang ∷ Maybe Text
+  , leadingComments ∷ Text
+  , moduleHeader ∷ Maybe Text
+  , actualCode ∷ Text
+  , trailingComments ∷ Text
+  }
+  deriving (Show)
+
+renderSourceCode ∷ SourceCodeToRender → Text
+renderSourceCode SourceCodeToRender {..} =
+  Text.concat
+    [ fromMaybe "" hashbang
+    , leadingComments
+    , actualCode
+    , trailingComments
+    ]
+
+processActualCode ∷ Text → Maybe Text
+processActualCode actualCode = do
+  pure actualCode
+    >>= lexify . renameCurlies
+    >>= nonEmpty . repair . fmap render
+    >>= runParser (evalStateT cut80 0) . flatten . tokensToStripes
+
 main ∷ IO ()
 main = do
   Command {..} ← getRecord @IO @Command "Minify your Haskell files!"
-  sourceCode ← Text.readFile source
-  let uncurlifiedSourceCode = renameCurlies sourceCode
-  let (hashLines, actualCode) = cut (all \line → (Text.head line == '#')) (Text.lines uncurlifiedSourceCode)
   let output = if target == "-" then Text.putStrLn else Text.writeFile target
-  maybe exitFailure (output . (Text.unlines hashLines <>)) do
-    pure (Text.unlines actualCode)
-      >>= lexify
-      >>= nonEmpty . repair . fmap render
-      >>= runParser (evalStateT cut80 0) . flatten . tokensToStripes
+  rawSourceCode ← Text.readFile source
+  let ParsedSourceCode {..} = fromMaybe (error "Cannot parse source code!") do runParser parseSourceCode rawSourceCode
+  let codeToProcess = fromMaybe "module Main where" moduleHeader <> "\n" <> actualCode
+  let processedActualCode = fromMaybe (error "Cannot process actual code!") do processActualCode codeToProcess
+  output do renderSourceCode SourceCodeToRender {actualCode = processedActualCode, ..}
