@@ -32,7 +32,7 @@ main = do
           then [{random} `{mod}` 80]
           else []
     {updatedEnemies} =
-      if {random} `{mod}` $odds_of_enemy_death_denominator < length {moreEnemies} * $odds_of_new_enemy_numerator
+      if {random} `{mod}` $odds_of_enemy_death_denominator < length {moreEnemies} * $odds_of_enemy_death_numerator
         then tail {moreEnemies}
         else {moreEnemies}
 
