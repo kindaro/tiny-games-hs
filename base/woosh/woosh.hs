@@ -11,10 +11,10 @@ import System.IO
 {pure} = pure
 
 main = do
-  {putStr} ({replicate} 40 ' ' ++ "▼" ++ {replicate} 39 ' ' ++ {replicate} 6 '\n')
+  {putStr} ({replicate} 40 ' ' ++ "$avatar" ++ {replicate} 39 ' ' ++ {replicate} $depth '\n')
   hSetEcho {stdin} False
   hSetBuffering {stdin} NoBuffering
-  {loop} (0, 2 ^ 30, [30, 40, 50] : repeat [], 40)
+  {loop} (0, $map, $enemies : repeat [], 40)
 
 {loop} ({iteration}, {random}, {enemies}, {hero}) = do
   let
@@ -31,7 +31,7 @@ main = do
     '\ESC' → {score} {iteration}
     _ → {pure} {hero}
 
-  {putStr} ("\^[[6A\^[[" ++ show ({hero} + 1) ++ "G.\^[[B\^[[" ++ show ({updatedHero} + 1) ++ "G▼\^[[5E")
+  {putStr} ("\^[[6A\^[[" ++ show ({hero} + 1) ++ "G.\^[[B\^[[" ++ show ({updatedHero} + 1) ++ "G$avatar\^[[5E")
   {putStr} (fmap (\{hero} → if {hero} `elem` {enemies} !! 0 || {hero} `elem` {enemies} !! 1 then '▯' else ' ') [0 .. 79] ++ "\n")
 
   if {updatedHero} `elem` {enemies} !! 5 || {updatedHero} `elem` {enemies} !! 6
