@@ -11,7 +11,12 @@ import System.IO
 {pure} = pure
 
 main = do
-  {putStr} ({replicate} 40 ' ' ++ "$avatar" ++ {replicate} 39 ' ' ++ {replicate} $depth '\n')
+  {putStr}
+    ( unlines
+        ( ({replicate} 40 '$blank' ++ "$avatar" ++ {replicate} 39 '$blank')
+            : {replicate} $before_depth ({replicate} 80 '$blank')
+        )
+    )
   hSetEcho {stdin} False
   hSetBuffering {stdin} NoBuffering
   {loop} (0, $map, $enemies : repeat [], 40)
@@ -19,9 +24,17 @@ main = do
 {loop} ({iteration}, {random}, {enemies}, {hero}) = do
   let
     {moreEnemies} =
-      zipWith (\{index} {enemy} → (((({random} `div` 3 ^ {index}) `{mod}` 3) - 1) + {enemy}) `{mod}` 80) [1 ..] ({enemies} !! 0)
-        ++ if {random} `{mod}` 7 == 0 then [{random} `{mod}` 80] else []
-    {updatedEnemies} = if {random} `{mod}` 101 < length {moreEnemies} then tail {moreEnemies} else {moreEnemies}
+      zipWith
+        (\{index} {enemy} → (((({random} `div` 3 ^ {index}) `{mod}` 3) - 1) + {enemy}) `{mod}` 80)
+        [1 ..]
+        ({enemies} !! 0)
+        ++ if {random} `{mod}` $odds_of_new_enemy_denominator < $odds_of_new_enemy_numerator
+          then [{random} `{mod}` 80]
+          else []
+    {updatedEnemies} =
+      if {random} `{mod}` $odds_of_enemy_death_denominator < length {moreEnemies} * $odds_of_new_enemy_numerator
+        then tail {moreEnemies}
+        else {moreEnemies}
 
   input ← getChar
 
@@ -31,11 +44,32 @@ main = do
     '\ESC' → {score} {iteration}
     _ → {pure} {hero}
 
-  {putStr} ("\^[[6A\^[[" ++ show ({hero} + 1) ++ "G.\^[[B\^[[" ++ show ({updatedHero} + 1) ++ "G$avatar\^[[5E")
-  {putStr} (fmap (\{hero} → if {hero} `elem` {enemies} !! 0 || {hero} `elem` {enemies} !! 1 then '▯' else ' ') [0 .. 79] ++ "\n")
+  {putStr}
+    ( "\^[[${depth}A\^[["
+        ++ show ({hero} + 1)
+        ++ "G.\^[[B\^[["
+        ++ show ({updatedHero} + 1)
+        ++ "G$avatar\^[[${before_depth}E"
+    )
+  {putStr}
+    ( fmap
+        ( \{block} →
+            if {block} `elem` {enemies} !! 0 || {block} `elem` {enemies} !! 1
+              then '$enemy'
+              else '$blank'
+        )
+        [0 .. 79]
+        ++ "\n"
+    )
 
-  if {updatedHero} `elem` {enemies} !! 5 || {updatedHero} `elem` {enemies} !! 6
+  if {updatedHero} `elem` {enemies} !! $before_depth || {updatedHero} `elem` {enemies} !! $depth
     then {score} {iteration}
-    else {loop} ({iteration} + 1, 13 * {random} `{mod}` (2 ^ 31 - 1), take 7 ({updatedEnemies} : {enemies}), {updatedHero})
+    else
+      {loop}
+        ( {iteration} + 1
+        , 13 * {random} `{mod}` (2 ^ 31 - 1)
+        , take $after_depth ({updatedEnemies} : {enemies})
+        , {updatedHero}
+        )
 
 {score} {iteration} = {putStr} "Score: " >> print {iteration} >> exitSuccess
