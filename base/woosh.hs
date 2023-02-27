@@ -1,4 +1,4 @@
-#!/usr/bin/env -S runghc-9.2.4 -XUnicodeSyntax
+#!/usr/bin/env -S runghc-9.2 -XUnicodeSyntax
 module Main where
 
 import System.Exit
@@ -28,12 +28,14 @@ main = do
   {updatedHero} ← fmap (`{mod}` 80) $ case input of
     'a' → {pure} ({hero} - 1)
     'd' → {pure} ({hero} + 1)
-    's' → {pure} {hero}
-    _ → print {iteration} >> exitSuccess >> {pure} 0
+    '\ESC' → {score} {iteration}
+    _ → {pure} {hero}
 
   {putStr} ("\^[[6A\^[[" ++ show ({hero} + 1) ++ "G.\^[[B\^[[" ++ show ({updatedHero} + 1) ++ "G▼\^[[5E")
   {putStr} (fmap (\{hero} → if {hero} `elem` {enemies} !! 0 || {hero} `elem` {enemies} !! 1 then '▯' else ' ') [0 .. 79] ++ "\n")
 
   if {updatedHero} `elem` {enemies} !! 5 || {updatedHero} `elem` {enemies} !! 6
-    then {putStr} "Score: " >> print {iteration} >> exitFailure
+    then {score} {iteration}
     else {loop} ({iteration} + 1, 13 * {random} `{mod}` (2 ^ 31 - 1), take 7 ({updatedEnemies} : {enemies}), {updatedHero})
+
+{score} {iteration} = {putStr} "Score: " >> print {iteration} >> exitSuccess
