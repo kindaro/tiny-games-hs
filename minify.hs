@@ -106,8 +106,9 @@ tokensToStripes = fix \recurse → \(token :| tokens) → case nonEmpty tokens o
     (_, (Black (ITat, _) _)) → token `loves` stripes
     ((_, this), (getBlack → (_, that))) →
       if
+          | Text.null this || Text.null that → error "Invariant: Tokens are not blank."
+          | this == "∷" && that == "∀" → token `hates` stripes
           | any (`elem` specialTokens) [this, that] → token `isIndifferentTowards` stripes
-          | Text.null this || Text.null that → token `isIndifferentTowards` stripes
           | ((== '"') . Text.last) this || ((== '"') . Text.head) that → token `isIndifferentTowards` stripes
           | (isAllowedInIdentifier . Text.last) this == (isAllowedInIdentifier . Text.head) that → token `hates` stripes
           | otherwise → token `isIndifferentTowards` stripes
@@ -438,7 +439,7 @@ processActualCode ∷ Text → Maybe Text
 processActualCode actualCode = do
   pure actualCode
     >>= lexify . renameCurlies
-    >>= nonEmpty . repair . fmap render
+    >>= nonEmpty . filter ((/= "") . snd) . repair . fmap render
     >>= runParser (evalStateT cut80 0) . flatten . tokensToStripes
 
 main ∷ IO ()
