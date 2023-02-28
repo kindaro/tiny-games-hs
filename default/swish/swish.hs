@@ -77,3 +77,5 @@ main = do
     )
 
 {score} {iteration} = {putStr} "\^[[?25hScore: " >> print {iteration} >> exitSuccess
+-- ^10 ------------------------------------------------------------------ 80> --
+-- default-10-80/$name (Kindaro), ghc 9.2
