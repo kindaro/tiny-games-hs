@@ -1,0 +1,17 @@
+cabal-version: 3.0
+name: snakes
+version: 0.1.0.0
+
+executable snakes-development
+  main-is: snakes.template.hs
+  other-modules: Imports
+  build-depends: ansi-terminal-game, base, lens
+  default-extensions: LambdaCase UnicodeSyntax
+  ghc-options: -threaded
+
+executable snakes
+  main-is: snakes.hs
+  other-modules: Imports
+  build-depends: ansi-terminal-game, base, lens
+  default-extensions: LambdaCase UnicodeSyntax
+  ghc-options: -threaded

@@ -1,0 +1,13 @@
+cradle:
+  cabal:
+    - path: "./snakes.template.hs"
+      component: "snakes:exe:snakes-development"
+
+    - path: "./Imports.hs"
+      component: "snakes:exe:snakes-development"
+
+    - path: "./snakes.hs"
+      component: "snakes:exe:snakes"
+
+    - path: "./Imports.hs"
+      component: "snakes:exe:snakes"
