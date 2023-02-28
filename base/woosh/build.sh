@@ -1,19 +1,20 @@
 #!/usr/bin/env sh
 
-export depth='6'
-export avatar='▼'
-export enemy='▯'
-export blank=' '
-export map='2 ^ 30'
-export enemies='[30, 40, 50]'
-export odds_of_enemy_death_numerator='1'
-export odds_of_enemy_death_denominator='101'
-export odds_of_new_enemy_numerator='1'
-export odds_of_new_enemy_denominator='7'
+settings="$1"
+if [ -z "$settings" ]
+then
+    echo "Usage: `basename $0` [settings]"
+    echo "Available settings:"
+    echo *.env
+    exit 1
+else
+    . ./"$settings"
+fi
 
 export before_depth="$(($depth - 1))"
 export after_depth="$(($depth + 1))"
+target=woosh."${settings%.env}".hs
 
-envsubst < `dirname $0`/woosh.hs > `dirname $0`/woosh.envsubst.hs
-cabal ./minify.hs --source `dirname $0`/woosh.envsubst.hs --target `dirname $0`/woosh.minified.hs
-chmod +x `dirname $0`/woosh.minified.hs
+envsubst < woosh.hs > woosh.envsubst.hs
+cabal ../../minify.hs --source woosh.envsubst.hs --target "$target"
+chmod +x "$target"
