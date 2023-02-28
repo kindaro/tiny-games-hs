@@ -28,6 +28,8 @@ base/rhythm/rhythm.hs
 base/peyton-says/peyton-says.hs
 base/acey-deucey/acey-deucey.hs
 base/flower-seeds/flower-seeds.hs
+base/woosh/woosh.caves.hs
+base/woosh/woosh.forest.hs
 default/type-and-furious/type-and-furious.hs
 default/shmupemup/shmupemup.hs
 default/tsp/tsp.hs

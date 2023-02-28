@@ -73,3 +73,5 @@ main = do
         )
 
 {score} {iteration} = {putStr} "Score: " >> print {iteration} >> exitSuccess
+-- ^10 ------------------------------------------------------------------ 80> --
+-- base-10-80/$name (Kindaro), ghc 9.2
